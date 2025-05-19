@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from typing import Annotated
+from pydantic import BaseModel, Field
 
 from langchain_core.runnables import ensure_config
 from langgraph.config import get_config
@@ -19,12 +20,16 @@ class Configuration:
         default=prompts.SYSTEM_PROMPT,
         metadata={
             "description": "The system prompt to use for the agent's interactions. "
-            "This prompt sets the context and behavior for the agent."
+            "This prompt sets the context and behavior for the agent.",
+            "json_schema_extra": {
+                "langgraph_nodes": ["call_model"],
+                "langgraph_type": "prompt",
+            }
         },
     )
 
     model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="Qwen/Qwen3-32B",
+        default="openai/Qwen/Qwen3-32B",
         metadata={
             "description": "The name of the language model to use for the agent's main interactions. "
             "Should be in the form: provider/model-name."
@@ -42,7 +47,7 @@ class Configuration:
 
     # tavily搜索引擎配置
     max_search_results: int = field(
-        default=10,
+        default=3,
         metadata={
             "description": "The maximum number of search results to return for each search query."
         },

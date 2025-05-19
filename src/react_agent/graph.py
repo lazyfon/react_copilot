@@ -6,9 +6,10 @@ Works with a chat model with tool calling support.
 from datetime import UTC, datetime
 from typing import Dict, List, Literal, cast
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 
 from react_agent.configuration import Configuration
 from react_agent.state import InputState, State
@@ -63,21 +64,94 @@ async def call_model(state: State) -> Dict[str, List[AIMessage]]:
     # Return the model's response as a list to be added to existing messages
     return {"messages": [response]}
 
+def human_review_node(state: State) -> Command[Literal["call_model", "tools"]]:
+    """Handle human review of the model's output.
+
+    This function is a placeholder for human review logic. It currently returns the
+    model's output without any modifications.
+
+    Args:
+        state (State): The current state of the conversation.
+
+    Returns:
+        Command: A command to continue the conversation with the model's output.
+    """
+    # In a real implementation, this would involve human review logic
+    last_message = state.messages[-1]
+    tool_call = last_message.tool_calls[0]
+
+    # 这是用于提供给用户确信的信息，通过Command来实现(resume=<human_review>)
+    human_review = interrupt(
+        {
+            "question": "工具调用正确吗？",
+            "tool_call": tool_call
+        }
+    )
+
+    review_action = human_review["action"]
+    review_data = human_review.get("data")
+
+    # 如果用户同意执行
+    if review_action == "continue":
+        # 这里可以添加更多的逻辑来处理用户的反馈
+        return Command(goto="tools")
+    elif review_action == "update":
+        updated_message = AIMessage(
+            id=last_message.id,
+            content=last_message.content,
+            tool_calls=[{
+                "id": tool_call["id"],
+                "name": tool_call["name"],
+                # 这里使用人工更新的参数执行
+                "args": review_data,
+            }],
+        )
+        return Command(
+            goto="tools",
+            update={"messages": [updated_message]})
+    elif review_action == "feedback":
+        tool_message = ToolMessage(content = review_data,
+                                   tool_call_id = tool_call["id"],
+                                   name = tool_call["name"])
+        return Command(goto="call_model",
+                       update={"messages": [tool_message]})
+    else:
+        updated_message = HumanMessage(content=f"拒绝调用工具{tool_call['name']}")
+        return Command(goto="call_model",
+                       update={"messages": [updated_message]}) 
 
 # Define a new graph
 
+def subgraph_node(state:State):
+    return Command(
+        goto="__end__",
+        update={
+            "messages": [
+                AIMessage(
+                    content="子图执行完毕，返回主图继续执行"
+                )
+            ]
+        }
+    )
+
 builder = StateGraph(State, input=InputState, config_schema=Configuration)
+subgraph_builder = StateGraph(State)
+subgraph_builder.add_node("subgraph_node", subgraph_node)
+subgraph_builder.add_edge("__start__", "subgraph_node")
+subgraph = subgraph_builder.compile(name="subgraph")
 
 # Define the two nodes we will cycle between
 builder.add_node(call_model)
+builder.add_node("human_review", human_review_node)
 builder.add_node("tools", ToolNode(TOOLS))
+builder.add_node("subgraph", subgraph)
 
 # Set the entrypoint as `call_model`
 # This means that this node is the first one called
 builder.add_edge("__start__", "call_model")
 
 
-def route_model_output(state: State) -> Literal["__end__", "tools"]:
+def route_model_output(state: State) -> Literal["subgraph", "human_review"]:
     """Determine the next node based on the model's output.
 
     This function checks if the model's last message contains tool calls.
@@ -86,7 +160,7 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
         state (State): The current state of the conversation.
 
     Returns:
-        str: The name of the next node to call ("__end__" or "tools").
+        str: The name of the next node to call ("subgraph" or "human_review").
     """
     last_message = state.messages[-1]
     if not isinstance(last_message, AIMessage):
@@ -95,9 +169,9 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
         )
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
-        return "__end__"
+        return "subgraph"
     # Otherwise we execute the requested actions
-    return "tools"
+    return "human_review"
 
 
 # Add a conditional edge to determine the next step after `call_model`
@@ -111,6 +185,7 @@ builder.add_conditional_edges(
 # Add a normal edge from `tools` to `call_model`
 # This creates a cycle: after using tools, we always return to the model
 builder.add_edge("tools", "call_model")
+builder.add_edge("subgraph", "__end__")
 
 # Compile the builder into an executable graph
 graph = builder.compile(name="ReAct Agent")
