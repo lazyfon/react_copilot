@@ -24,13 +24,23 @@ class Configuration:
     )
 
     model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="anthropic/claude-3-5-sonnet-20240620",
+        default="Qwen/Qwen3-32B",
         metadata={
             "description": "The name of the language model to use for the agent's main interactions. "
             "Should be in the form: provider/model-name."
         },
     )
 
+    base_url: str = field(
+        default="https://api.siliconflow.cn/v1",
+        metadata={
+            "description": "The base URL for the LLM API. "
+            "This is used to make requests to the LLM service."
+        },
+    )
+
+
+    # tavily搜索引擎配置
     max_search_results: int = field(
         default=10,
         metadata={
