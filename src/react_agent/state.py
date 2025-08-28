@@ -17,11 +17,10 @@ class InputState:
 
     This class is used to define the initial state and structure of incoming data.
     """
-
+    url: str
     messages: Annotated[Sequence[AnyMessage], add_messages] = field(
         default_factory=list
     )
-    url: str
     """
     Messages tracking the primary execution state of the agent.
 
